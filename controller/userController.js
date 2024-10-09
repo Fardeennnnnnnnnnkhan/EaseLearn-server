@@ -6,7 +6,7 @@ import sendMail from '../middleware/sendMail.js';
 export const register = async (req, res) => {
     try {
         console.log('Request Body:', req.body); 
-        const { name , email , password } = req.body;
+        const { name, email, password } = req.body;
         if (!email || !password || !name) {
             return res.status(400).json({ message: "All fields are required" });
         }
@@ -14,31 +14,32 @@ export const register = async (req, res) => {
         let user = await User.findOne({ email });
         if (user) return res.status(400).json({ message: "User Already Exists" });
 
-    
         const hashPassword = await bcrypt.hash(password, 10);
 
-        user = await User.create({
-            name,
-            email,
-            password: hashPassword, // Store hashed password
-        });
-
         // Generate OTP
-        const otp = Math.floor(Math.random() * 100000);
+        const otp = Math.floor(Math.random() * 100000);  // 5-digit OTP
+        console.log("Generated OTP:", otp);
 
-        // Create activation token
-        const activationToken = jwt.sign({ user, otp }, process.env.Activation_Token, {
-            expiresIn: "2m"
-        });
-        // Email data
+        // Create activation token with user details and OTP
+        const activationToken = jwt.sign(
+            { name, email, hashPassword, otp },  // Save the hashed password here
+            process.env.Activation_Token,
+            { expiresIn: "10m" }
+        );
+
+        // Email data (you can modify this structure)
         const data = {
             name,
             otp,
         };
 
-        // Send OTP email
-        await sendMail(email, "E-Learning", data);
-
+        try {
+            await sendMail(email, "E-Learning OTP Verification", data);
+            console.log(`OTP email sent to ${email}`);
+        } catch (emailErr) {
+            console.error("Error sending email:", emailErr);
+            return res.status(500).json({ message: "Error sending email" });
+        }
         // Send response
         res.status(200).json({
             message: "OTP SENT TO YOUR MAIL",
@@ -52,23 +53,39 @@ export const register = async (req, res) => {
 };
 
 
+
 export const verifyUser = async (req, res) => {
     try {
         const { otp, activationToken } = req.body;
-        const verify = jwt.verify(activationToken, process.env.Activation_Token);
+        
+        // Verify the JWT token
+        const decoded = jwt.verify(activationToken, process.env.Activation_Token);
 
-        if (!verify) return res.status(400).json({ message: "OTP EXPIRED" });
+        // Check if token has expired or is invalid
+        if (!decoded) return res.status(400).json({ message: "OTP EXPIRED" });
 
-        if (verify.otp !== otp) return res.status(400).json({ message: "Wrong OTP" });
+        const { name, email, hashPassword, otp: storedOtp } = decoded;
 
-        await User.create({
-            name: verify.user.name,
-            email: verify.user.email,
-            password: verify.user.password
+        // Verify OTP
+        if (storedOtp !== otp) {
+            return res.status(400).json({ message: "Wrong OTP" });
+        }
+
+        // Check if the user is already registered (to avoid duplication)
+        let user = await User.findOne({ email });
+        if (user) return res.status(400).json({ message: "User Already Registered" });
+
+        // Finally, create the user after OTP is verified
+        user = await User.create({
+            name,
+            email,
+            password: hashPassword,  // Save the hashed password
         });
 
         res.status(200).json({ message: "User registered successfully" });
+
     } catch (err) {
+        console.log(err);
         res.status(500).json({ message: err.message });
     }
 };
